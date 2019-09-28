@@ -22,10 +22,20 @@ pub struct Config {
     pub binary: PathBuf,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Copy)]
 pub struct Trace {
     /// Optional address showing location in the test artefact
     pub address: Option<u64>,
+    pub count: usize,
+}
+
+impl Trace {
+    pub fn new(addr: u64) -> Trace {
+        Trace {
+            address: Some(addr),
+            count: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -61,8 +71,8 @@ pub fn run(config: &Config) -> Result<(), Error> {
     }
     match fork() {
         Ok(ForkResult::Parent { child }) => match collect_coverage(child, config) {
-            Ok(t) => Ok(()),
-            Err(e) => Err(Error::TestFail),
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
         },
         Ok(ForkResult::Child) => {
             execute_test(&config.binary)?;
@@ -72,10 +82,13 @@ pub fn run(config: &Config) -> Result<(), Error> {
     }
 }
 
-
 fn collect_coverage(test: Pid, config: &Config) -> Result<(), Error> {
-    let traces = config.breakpoints.iter().map(|x| Trace{ address:Some(*x)}).collect::<Vec<_>>();
-    let (mut state, mut data) = create_state_machine(test, traces.as_slice(), config);
+    let mut traces = config
+        .breakpoints
+        .iter()
+        .map(|x| Trace::new(*x))
+        .collect::<Vec<_>>();
+    let (mut state, mut data) = create_state_machine(test, traces.as_mut_slice(), config);
     loop {
         state = state.step(&mut data, config)?;
         if state.is_finished() {
@@ -85,14 +98,14 @@ fn collect_coverage(test: Pid, config: &Config) -> Result<(), Error> {
             break;
         }
     }
+    for t in &traces {
+        println!("Address {:x} hits {}", t.address.unwrap_or(0), t.count);
+    }
     Ok(())
 }
 
-
 /// Launches the test executable
-fn execute_test(
-    test: &Path,
-) -> Result<(), Error> {
+fn execute_test(test: &Path) -> Result<(), Error> {
     let exec_path = CString::new(test.to_str().unwrap()).unwrap();
     println!("running {}", test.display());
 
