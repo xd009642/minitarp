@@ -14,11 +14,10 @@ fn main() -> Result<(), Error> {
     if let Ok(conf) = std::fs::read_to_string(config) {
         let config: Config =
             toml::from_str(&conf).map_err(|e| Error::BadToml(format!("Invalid toml {}", e)))?;
-        println!(
-            "Running for {} on breakpoints: {:#?}",
-            config.binary.display(),
-            config.breakpoints
-        );
+        println!("Running for {} on breakpoints:", config.binary.display());
+        for b in &config.breakpoints {
+            print!("{:x} ", b);
+        }
         run(&config)?;
     }
     Ok(())

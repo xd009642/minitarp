@@ -78,7 +78,7 @@ pub fn run(config: &Config) -> Result<(), Error> {
             execute_test(&config.binary)?;
             Ok(())
         }
-        Err(err) => Err(Error::ForkFail),
+        Err(_) => Err(Error::ForkFail),
     }
 }
 
@@ -88,7 +88,7 @@ fn collect_coverage(test: Pid, config: &Config) -> Result<(), Error> {
         .iter()
         .map(|x| Trace::new(*x))
         .collect::<Vec<_>>();
-    let (mut state, mut data) = create_state_machine(test, traces.as_mut_slice(), config);
+    let (mut state, mut data) = create_state_machine(test, traces.as_mut_slice());
     loop {
         state = state.step(&mut data, config)?;
         if state.is_finished() {

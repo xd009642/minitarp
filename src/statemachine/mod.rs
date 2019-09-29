@@ -5,6 +5,10 @@ use crate::Error as RunError;
 use std::time::Duration;
 use std::time::Instant;
 
+pub mod timeline;
+
+pub use timeline::*;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 
@@ -37,41 +41,6 @@ pub enum TracerAction<T> {
     Step(T),
     Detach(T),
     Nothing,
-}
-
-impl<T> TracerAction<T> {
-    pub fn is_detach(&self) -> bool {
-        if let TracerAction::Detach(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_continue(&self) -> bool {
-        if let TracerAction::Continue(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_step(&self) -> bool {
-        if let TracerAction::Step(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn get_data(&self) -> Option<&T> {
-        match self {
-            TracerAction::Continue(d) => Some(d),
-            TracerAction::Step(d) => Some(d),
-            TracerAction::Detach(d) => Some(d),
-            _ => None,
-        }
-    }
 }
 
 /// Tracing a process on an OS will have platform specific code.
@@ -117,7 +86,7 @@ impl TestState {
     }
 
     /// Updates the state machine state
-    pub fn step<T: StateData>(self, data: &mut T, config: &Config) -> Result<TestState, RunError> {
+    pub fn step<T: StateData>(self, data: &mut T, _config: &Config) -> Result<TestState, RunError> {
         match self {
             TestState::Start { start_time } => {
                 if let Some(s) = data.start()? {

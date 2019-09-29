@@ -1,6 +1,6 @@
 use crate::statemachine::*;
 use crate::Error as RunError;
-use crate::{Config, Trace};
+use crate::Trace;
 use nix::errno::Errno;
 use nix::sys::signal::Signal;
 use nix::sys::wait::*;
@@ -8,12 +8,8 @@ use nix::unistd::Pid;
 use nix::Error as NixErr;
 use std::collections::{HashMap, HashSet};
 
-pub fn create_state_machine<'a>(
-    test: Pid,
-    traces: &'a mut [Trace],
-    config: &'a Config,
-) -> (TestState, LinuxData<'a>) {
-    let mut data = LinuxData::new(traces, config);
+pub fn create_state_machine<'a>(test: Pid, traces: &'a mut [Trace]) -> (TestState, LinuxData<'a>) {
+    let mut data = LinuxData::new(traces);
     data.parent = test;
     (TestState::start_state(), data)
 }
@@ -56,10 +52,10 @@ pub struct LinuxData<'a> {
     breakpoints: HashMap<u64, Breakpoint>,
     /// Instrumentation points in code with associated coverage data
     traces: &'a mut [Trace],
-    /// Program config
-    config: &'a Config,
     /// Thread count. Hopefully getting rid of in future
     thread_count: isize,
+    /// Used for plotting a signal timeline
+    timeline: Timeline,
 }
 
 impl<'a> StateData for LinuxData<'a> {
@@ -182,6 +178,8 @@ impl<'a> StateData for LinuxData<'a> {
                     ))),
                 },
                 WaitStatus::Stopped(c, Signal::SIGTRAP) => {
+                    self.timeline
+                        .add_event(Event::new(*c, "SIGTRAP".to_string()));
                     self.current = *c;
                     match self.collect_coverage_data(&mut pcs) {
                         Ok(s) => Ok(s),
@@ -191,14 +189,26 @@ impl<'a> StateData for LinuxData<'a> {
                         ))),
                     }
                 }
-                WaitStatus::Stopped(child, Signal::SIGSTOP) => Ok((
-                    TestState::wait_state(),
-                    TracerAction::Continue(child.into()),
-                )),
-                WaitStatus::Stopped(_, Signal::SIGSEGV) => Err(RunError::TestRuntime(
-                    "A segfault occurred while executing tests".to_string(),
-                )),
+                WaitStatus::Stopped(child, Signal::SIGSTOP) => {
+                    self.timeline
+                        .add_event(Event::new(*child, "SIGSTOP".to_string()));
+                    Ok((
+                        TestState::wait_state(),
+                        TracerAction::Continue(child.into()),
+                    ))
+                }
+                WaitStatus::Stopped(c, Signal::SIGSEGV) => {
+                    self.timeline
+                        .add_event(Event::new(*c, "SIGSEGV".to_string()));
+                    println!("Trying to save");
+                    self.timeline.save_graph("output.png");
+                    Err(RunError::TestRuntime(
+                        "A segfault occurred while executing tests".to_string(),
+                    ))
+                }
                 WaitStatus::Stopped(child, Signal::SIGILL) => {
+                    self.timeline
+                        .add_event(Event::new(*child, "SIGILL".to_string()));
                     let pc = current_instruction_pointer(*child).unwrap_or_else(|_| 1) - 1;
                     println!("SIGILL raised. Child program counter is: 0x{:x}", pc);
                     Err(RunError::TestRuntime(format!(
@@ -206,7 +216,7 @@ impl<'a> StateData for LinuxData<'a> {
                         child
                     )))
                 }
-                WaitStatus::Stopped(c, s) => {
+                WaitStatus::Stopped(c, _) => {
                     let info = ProcessInfo::new(*c, None);
                     Ok((TestState::wait_state(), TracerAction::TryContinue(info)))
                 }
@@ -220,6 +230,8 @@ impl<'a> StateData for LinuxData<'a> {
                     }
                 }
                 WaitStatus::Exited(child, ec) => {
+                    self.timeline
+                        .add_event(Event::new(*child, format!("EXITED {}", ec)));
                     for ref mut value in self.breakpoints.values_mut() {
                         value.thread_killed(*child);
                     }
@@ -254,18 +266,26 @@ impl<'a> StateData for LinuxData<'a> {
             println!("Executing action {:?}", a);
             match a {
                 TracerAction::TryContinue(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "TryContinue".to_string()));
                     continued = true;
                     let _ = continue_exec(t.pid, t.signal);
                 }
                 TracerAction::Continue(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "Continue".to_string()));
                     continued = true;
                     continue_exec(t.pid, t.signal)?;
                 }
                 TracerAction::Step(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "Step".to_string()));
                     continued = true;
                     single_step(t.pid)?;
                 }
                 TracerAction::Detach(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "Detach".to_string()));
                     continued = true;
                     detach_child(t.pid)?;
                 }
@@ -281,15 +301,15 @@ impl<'a> StateData for LinuxData<'a> {
 }
 
 impl<'a> LinuxData<'a> {
-    pub fn new(traces: &'a mut [Trace], config: &'a Config) -> LinuxData<'a> {
+    pub fn new(traces: &'a mut [Trace]) -> LinuxData<'a> {
         LinuxData {
             wait_queue: Vec::new(),
             current: Pid::from_raw(0),
             parent: Pid::from_raw(0),
             breakpoints: HashMap::new(),
             traces,
-            config,
             thread_count: 0,
+            timeline: Timeline::new(),
         }
     }
 
@@ -300,11 +320,20 @@ impl<'a> LinuxData<'a> {
         event: i32,
     ) -> Result<(TestState, TracerAction<ProcessInfo>), RunError> {
         use nix::libc::*;
+        let rip = match current_instruction_pointer(child) {
+            Ok(pc) => (pc - 1),
+            Err(_) => std::i64::MIN,
+        };
 
         if sig == Signal::SIGTRAP {
             match event {
                 PTRACE_EVENT_CLONE => match get_event_data(child) {
                     Ok(t) => {
+                        self.timeline.add_event(Event::new_thread(
+                            rip,
+                            child,
+                            Pid::from_raw(t as pid_t),
+                        ));
                         println!("New thread spawned {}", t);
                         self.thread_count += 1;
                         Ok((
@@ -321,17 +350,23 @@ impl<'a> LinuxData<'a> {
                 },
                 PTRACE_EVENT_FORK | PTRACE_EVENT_VFORK => {
                     println!("Caught fork event");
+                    self.timeline
+                        .add_event(Event::new(child, "Fork Event".to_string()));
                     Ok((
                         TestState::wait_state(),
                         TracerAction::Continue(child.into()),
                     ))
                 }
                 PTRACE_EVENT_EXEC => {
+                    self.timeline
+                        .add_event(Event::new(child, "Exec Event".to_string()));
                     println!("Child execed other process - detaching ptrace");
                     Ok((TestState::wait_state(), TracerAction::Detach(child.into())))
                 }
                 PTRACE_EVENT_EXIT => {
                     println!("Child exiting");
+                    self.timeline
+                        .add_event(Event::new(child, "EXIT".to_string()));
                     self.thread_count -= 1;
                     Ok((
                         TestState::wait_state(),

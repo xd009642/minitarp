@@ -1,3 +1,5 @@
-breakpoints = [1,2,3,4]
-binary = "/target/thing"
+#9, 19, 14,20, 15, 10, 5, 4, 9, 19, 4, 14
+breakpoints = [0x4043e0, 0x404420, 0x404400, 0x404424, 0x404404, 0x4043e4, 
+0x4043c4, 0x4043c0, 0x4044c0, 0x404500, 0x4044a0, 0x4044e0]
+binary = "./data/future-bin"
 
