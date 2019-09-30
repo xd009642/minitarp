@@ -12,3 +12,5 @@ serde = {version="1.0", features=["derive"]}
 toml = "0.5.3"
 libc = "0.2.45"
 nix = "0.15.0"
+gnuplot = "0.0.31"
+scheduler = "0.1"

@@ -10,6 +10,9 @@ use linux::*;
 pub mod ptrace_control;
 mod statemachine;
 
+use libc::sched_getcpu;
+use scheduler::CpuSet;
+
 use statemachine::*;
 
 pub mod prelude {
@@ -69,6 +72,7 @@ pub fn run(config: &Config) -> Result<(), Error> {
     if !config.binary.exists() {
         return Err(Error::TestDoesntExist);
     }
+    lock_cpu(); 
     match fork() {
         Ok(ForkResult::Parent { child }) => match collect_coverage(child, config) {
             Ok(_) => Ok(()),
@@ -98,10 +102,30 @@ fn collect_coverage(test: Pid, config: &Config) -> Result<(), Error> {
             break;
         }
     }
+    data.timeline.add_event(Event::new(test, "FINISHED".to_string()));
+    data.timeline.save_graph("output_pass.png");
     for t in &traces {
         println!("Address {:x} hits {}", t.address.unwrap_or(0), t.count);
     }
     Ok(())
+}
+
+fn lock_cpu() {
+    let pid = Pid::this();
+    let current_cpu = unsafe {
+        sched_getcpu() as usize
+    };
+    // constant taken from kcov
+    let cpu_count = 4096;
+    let mut set = CpuSet::new(cpu_count);
+    for i in 0..cpu_count {
+        if i != current_cpu {
+            set.clear(i);
+        } else {
+            set.set(i);
+        }
+    }
+    set.set_affinity(libc::pid_t::from(pid)).expect("Failed to set CPU affinity");
 }
 
 /// Launches the test executable

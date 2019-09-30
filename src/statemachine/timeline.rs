@@ -2,7 +2,7 @@ use crate::ptrace_control::*;
 use nix::unistd::*;
 use std::collections::HashSet;
 
-use gnuplot::{AxesCommon, Coordinate, Figure, LabelOption, MarginSide};
+use gnuplot::{AxesCommon, Coordinate, Figure, LabelOption, MarginSide, AutoOption};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -64,6 +64,8 @@ impl Timeline {
         let mut figure = Figure::new();
         {
             let axes = figure.axes2d();
+            axes.set_x_ticks(Some((AutoOption::Fix(1.0), 0)), &[], &[]);
+            axes.set_x_grid(true);
             axes.set_margins(&[MarginSide::MarginTop(0.01), MarginSide::MarginBottom(0.99)]);
             for pid in self.pids.iter() {
                 let samples = self

@@ -55,7 +55,7 @@ pub struct LinuxData<'a> {
     /// Thread count. Hopefully getting rid of in future
     thread_count: isize,
     /// Used for plotting a signal timeline
-    timeline: Timeline,
+    pub timeline: Timeline,
 }
 
 impl<'a> StateData for LinuxData<'a> {
@@ -131,20 +131,47 @@ impl<'a> StateData for LinuxData<'a> {
             match wait {
                 Ok(WaitStatus::StillAlive) => {
                     running = false;
-                }
-                Ok(WaitStatus::Exited(_, _)) => {
+                },
+                Ok(WaitStatus::Exited(pid, _)) => {
+                    self.timeline.add_event(Event::new(pid, "Wait::Exited".to_string()));
                     self.wait_queue.push(wait.unwrap());
                     result = Ok(Some(TestState::Stopped));
                     running = false;
-                }
-                Ok(WaitStatus::PtraceEvent(_, _, _)) => {
+                },
+                Ok(WaitStatus::PtraceEvent(pid, _, _)) => {
+                    self.timeline.add_event(Event::new(pid, "Wait::PtraceEvent".to_string()));
                     self.wait_queue.push(wait.unwrap());
                     result = Ok(Some(TestState::Stopped));
                     running = false;
-                }
-                Ok(s) => {
+                },
+                Ok(s @ WaitStatus::Stopped(_, _)) => {
+                    if let WaitStatus::Stopped(pid,_) = s {
+                        self.timeline.add_event(Event::new(pid, "Wait::Stopped".to_string()));
+                    }
                     self.wait_queue.push(s);
                     result = Ok(Some(TestState::Stopped));
+                },
+                Ok(s @ WaitStatus::Continued(_)) => {
+                    if let WaitStatus::Continued(pid) = s {
+                        self.timeline.add_event(Event::new(pid, "Wait::Continued".to_string()));
+                    }
+                    self.wait_queue.push(s);
+                    result = Ok(Some(TestState::Stopped));
+                },
+                Ok(s @ WaitStatus::PtraceSyscall(_)) => {
+                    if let WaitStatus::PtraceSyscall(pid) = s {
+                        self.timeline.add_event(Event::new(pid, "Wait::PtraceSyscall".to_string()));
+                    }
+                    self.wait_queue.push(s);
+                    result = Ok(Some(TestState::Stopped));
+                },
+                Ok(s @ WaitStatus::Signaled(_, _, _)) => {
+                    if let WaitStatus::Signaled(pid,_,_) = s {
+                        self.timeline.add_event(Event::new(pid, "Wait::Signaled".to_string()));
+                    }
+                    self.wait_queue.push(s);
+                    result = Ok(Some(TestState::Stopped));
+
                 }
                 Err(e) => {
                     running = false;
@@ -181,7 +208,7 @@ impl<'a> StateData for LinuxData<'a> {
                     self.timeline
                         .add_event(Event::new(*c, "SIGTRAP".to_string()));
                     self.current = *c;
-                    match self.collect_coverage_data(&mut pcs) {
+                    match self.collect_coverage_data(*c, &mut pcs) {
                         Ok(s) => Ok(s),
                         Err(e) => Err(RunError::TestRuntime(format!(
                             "Error when collecting coverage: {:?}",
@@ -216,7 +243,9 @@ impl<'a> StateData for LinuxData<'a> {
                         child
                     )))
                 }
-                WaitStatus::Stopped(c, _) => {
+                WaitStatus::Stopped(c, s) => {
+                    self.timeline
+                        .add_event(Event::new(*c, format!("STOPPED {:?}", s)));
                     let info = ProcessInfo::new(*c, None);
                     Ok((TestState::wait_state(), TracerAction::TryContinue(info)))
                 }
@@ -387,11 +416,13 @@ impl<'a> LinuxData<'a> {
 
     fn collect_coverage_data(
         &mut self,
+        child: Pid,
         visited_pcs: &mut HashSet<u64>,
     ) -> Result<UpdateContext, RunError> {
         let mut action = None;
         if let Ok(rip) = current_instruction_pointer(self.current) {
             let rip = (rip - 1) as u64;
+            self.timeline.add_event(Event::new(child, format!("RIP: 0x{:x}", rip)));
             println!("Hit address 0x{:x}", rip);
             if self.breakpoints.contains_key(&rip) {
                 let bp = &mut self.breakpoints.get_mut(&rip).unwrap();
@@ -431,6 +462,8 @@ impl<'a> LinuxData<'a> {
     ) -> Result<UpdateContext, RunError> {
         match (sig, flag) {
             (Signal::SIGTRAP, true) => {
+                self.timeline.add_event(Event::new(*pid, "Child Signaled".to_string()));
+
                 Ok((TestState::wait_state(), TracerAction::Continue(pid.into())))
             }
             _ => Err(RunError::StateMachine("Unexpected stop".to_string())),
