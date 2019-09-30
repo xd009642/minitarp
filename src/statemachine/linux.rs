@@ -227,8 +227,6 @@ impl<'a> StateData for LinuxData<'a> {
                 WaitStatus::Stopped(c, Signal::SIGSEGV) => {
                     self.timeline
                         .add_event(Event::new(*c, "SIGSEGV".to_string()));
-                    println!("Trying to save");
-                    self.timeline.save_graph("output.png");
                     Err(RunError::TestRuntime(
                         "A segfault occurred while executing tests".to_string(),
                     ))
@@ -289,41 +287,42 @@ impl<'a> StateData for LinuxData<'a> {
                 }
                 Err(e) => result = Err(e),
             }
-        }
-        let mut continued = false;
-        for a in &actions {
-            println!("Executing action {:?}", a);
-            match a {
-                TracerAction::TryContinue(t) => {
-                    self.timeline
-                        .add_event(Event::new(t.pid, "TryContinue".to_string()));
-                    continued = true;
-                    let _ = continue_exec(t.pid, t.signal);
+            let mut continued = false;
+            for a in &actions {
+                println!("Executing action {:?}", a);
+                match a {
+                    TracerAction::TryContinue(t) => {
+                        self.timeline
+                            .add_event(Event::new(t.pid, "TryContinue".to_string()));
+                        continued = true;
+                        let _ = continue_exec(t.pid, t.signal);
+                    }
+                    TracerAction::Continue(t) => {
+                        self.timeline
+                            .add_event(Event::new(t.pid, "Continue".to_string()));
+                        continued = true;
+                        continue_exec(t.pid, t.signal)?;
+                    }
+                    TracerAction::Step(t) => {
+                        self.timeline
+                            .add_event(Event::new(t.pid, "Step".to_string()));
+                        continued = true;
+                        single_step(t.pid)?;
+                    }
+                    TracerAction::Detach(t) => {
+                        self.timeline
+                            .add_event(Event::new(t.pid, "Detach".to_string()));
+                        continued = true;
+                        detach_child(t.pid)?;
+                    }
+                    _ => {}
                 }
-                TracerAction::Continue(t) => {
-                    self.timeline
-                        .add_event(Event::new(t.pid, "Continue".to_string()));
-                    continued = true;
-                    continue_exec(t.pid, t.signal)?;
-                }
-                TracerAction::Step(t) => {
-                    self.timeline
-                        .add_event(Event::new(t.pid, "Step".to_string()));
-                    continued = true;
-                    single_step(t.pid)?;
-                }
-                TracerAction::Detach(t) => {
-                    self.timeline
-                        .add_event(Event::new(t.pid, "Detach".to_string()));
-                    continued = true;
-                    detach_child(t.pid)?;
-                }
-                _ => {}
             }
-        }
-        if !continued {
-            println!("No action suggested to continue tracee. Attempting a continue");
-            let _ = continue_exec(self.parent, None);
+            actions.clear();
+            if !continued {
+                println!("No action suggested to continue tracee. Attempting a continue");
+           //     let _ = continue_exec(self.parent, None);
+            }
         }
         result
     }

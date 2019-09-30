@@ -66,7 +66,7 @@ impl Timeline {
             let axes = figure.axes2d();
             axes.set_x_ticks(Some((AutoOption::Fix(1.0), 0)), &[], &[]);
             axes.set_x_grid(true);
-            axes.set_margins(&[MarginSide::MarginTop(0.01), MarginSide::MarginBottom(0.99)]);
+            axes.set_margins(&[MarginSide::MarginTop(0.05), MarginSide::MarginBottom(0.85)]);
             for pid in self.pids.iter() {
                 let samples = self
                     .events
@@ -75,7 +75,7 @@ impl Timeline {
                     .filter(|(_, x)| x.pid == *pid)
                     .collect::<Vec<_>>();
                 let len = samples.len();
-                let opts = &[LabelOption::Rotate(45.0)];
+                let opts = &[LabelOption::Rotate(90.0)];
                 for (i, s) in samples.iter() {
                     let description = format!("{}: {}", s.pid, s.descr);
                     axes.label(

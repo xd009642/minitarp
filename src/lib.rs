@@ -94,7 +94,15 @@ fn collect_coverage(test: Pid, config: &Config) -> Result<(), Error> {
         .collect::<Vec<_>>();
     let (mut state, mut data) = create_state_machine(test, traces.as_mut_slice());
     loop {
-        state = state.step(&mut data, config)?;
+        state = state.step(&mut data, config).map_err(|e| {
+            let msg =format!("{:?}", e).chars().map(|c| match c {
+                '"' => '\'',
+                _ => c
+            }).collect();
+            data.timeline.add_event(Event::new(test, msg));
+            data.timeline.save_graph("Output_fail.png");
+            e
+        })?;
         if state.is_finished() {
             if let TestState::End(i) = state {
                 println!("Return code is {}", i);
@@ -130,6 +138,7 @@ fn lock_cpu() {
 
 /// Launches the test executable
 fn execute_test(test: &Path) -> Result<(), Error> {
+    lock_cpu();
     let exec_path = CString::new(test.to_str().unwrap()).unwrap();
     println!("running {}", test.display());
 
