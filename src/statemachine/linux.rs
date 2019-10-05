@@ -4,9 +4,11 @@ use crate::Trace;
 use nix::errno::Errno;
 use nix::sys::signal::Signal;
 use nix::sys::wait::*;
-use nix::unistd::Pid;
+use nix::unistd::{Pid, execvp};
 use nix::Error as NixErr;
 use std::collections::{HashMap, HashSet};
+
+use std::ffi::CString;
 
 pub fn create_state_machine<'a>(test: Pid, traces: &'a mut [Trace]) -> (TestState, LinuxData<'a>) {
     let mut data = LinuxData::new(traces);
@@ -227,6 +229,10 @@ impl<'a> StateData for LinuxData<'a> {
                 WaitStatus::Stopped(c, Signal::SIGSEGV) => {
                     self.timeline
                         .add_event(Event::new(*c, "SIGSEGV".to_string()));
+                    self.timeline.save_graph("out.sigsegv.png");
+                    execvp(&CString::new("gcore").unwrap(), 
+                           &[CString::new("-a").unwrap(), CString::new(format!("{}", c)).unwrap()])
+                        .expect("Failed to gcore");
                     Err(RunError::TestRuntime(
                         "A segfault occurred while executing tests".to_string(),
                     ))
@@ -235,6 +241,7 @@ impl<'a> StateData for LinuxData<'a> {
                     self.timeline
                         .add_event(Event::new(*child, "SIGILL".to_string()));
                     let pc = current_instruction_pointer(*child).unwrap_or_else(|_| 1) - 1;
+                    self.timeline.save_graph("out.sigill.png");
                     println!("SIGILL raised. Child program counter is: 0x{:x}", pc);
                     Err(RunError::TestRuntime(format!(
                         "Error running test - SIGILL raised in {}",
@@ -287,42 +294,41 @@ impl<'a> StateData for LinuxData<'a> {
                 }
                 Err(e) => result = Err(e),
             }
-            let mut continued = false;
-            for a in &actions {
-                println!("Executing action {:?}", a);
-                match a {
-                    TracerAction::TryContinue(t) => {
-                        self.timeline
-                            .add_event(Event::new(t.pid, "TryContinue".to_string()));
-                        continued = true;
-                        let _ = continue_exec(t.pid, t.signal);
-                    }
-                    TracerAction::Continue(t) => {
-                        self.timeline
-                            .add_event(Event::new(t.pid, "Continue".to_string()));
-                        continued = true;
-                        continue_exec(t.pid, t.signal)?;
-                    }
-                    TracerAction::Step(t) => {
-                        self.timeline
-                            .add_event(Event::new(t.pid, "Step".to_string()));
-                        continued = true;
-                        single_step(t.pid)?;
-                    }
-                    TracerAction::Detach(t) => {
-                        self.timeline
-                            .add_event(Event::new(t.pid, "Detach".to_string()));
-                        continued = true;
-                        detach_child(t.pid)?;
-                    }
-                    _ => {}
+        }
+        let mut continued = false;
+        for a in &actions {
+            println!("Executing action {:?}", a);
+            match a {
+                TracerAction::TryContinue(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "TryContinue".to_string()));
+                    continued = true;
+                    let _ = continue_exec(t.pid, t.signal);
                 }
+                TracerAction::Continue(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "Continue".to_string()));
+                    continued = true;
+                    continue_exec(t.pid, t.signal)?;
+                }
+                TracerAction::Step(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "Step".to_string()));
+                    continued = true;
+                    single_step(t.pid)?;
+                }
+                TracerAction::Detach(t) => {
+                    self.timeline
+                        .add_event(Event::new(t.pid, "Detach".to_string()));
+                    continued = true;
+                    detach_child(t.pid)?;
+                }
+                _ => {}
             }
-            actions.clear();
-            if !continued {
-                println!("No action suggested to continue tracee. Attempting a continue");
-           //     let _ = continue_exec(self.parent, None);
-            }
+        }
+        if !continued {
+            println!("No action suggested to continue tracee. Attempting a continue");
+       //     let _ = continue_exec(self.parent, None);
         }
         result
     }

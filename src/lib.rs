@@ -142,7 +142,7 @@ fn execute_test(test: &Path) -> Result<(), Error> {
     let exec_path = CString::new(test.to_str().unwrap()).unwrap();
     println!("running {}", test.display());
 
-    let mut envars: Vec<CString> = vec![CString::new("RUST_TEST_THREADS=1").unwrap()];
+    let mut envars: Vec<CString> = vec![];
     for (key, value) in env::vars() {
         let mut temp = String::new();
         temp.push_str(key.as_str());

@@ -66,7 +66,7 @@ impl Timeline {
             let axes = figure.axes2d();
             axes.set_x_ticks(Some((AutoOption::Fix(1.0), 0)), &[], &[]);
             axes.set_x_grid(true);
-            axes.set_margins(&[MarginSide::MarginTop(0.05), MarginSide::MarginBottom(0.85)]);
+            axes.set_margins(&[MarginSide::MarginTop(0.05), MarginSide::MarginBottom(0.80)]);
             for pid in self.pids.iter() {
                 let samples = self
                     .events
@@ -113,7 +113,9 @@ impl Timeline {
                 axes.lines_points(x, y, &[]);
             }
         }
-        figure.set_terminal("pngcairo size 3840,2160", path);
+        let w = self.events.len() * 20;
+        let h = self.pids.len() * 200;
+        figure.set_terminal(&format!("pngcairo size {},{}", w, h), path);
         figure.show().close();
     }
 }
