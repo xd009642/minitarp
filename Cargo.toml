@@ -4,13 +4,9 @@ version = "0.1.0"
 authors = ["xd009642 <danielmckenna93@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 clap = "2.31.2"
+libc = "*"
 serde = {version="1.0", features=["derive"]}
-toml = "0.5.3"
-libc = "0.2.45"
-nix = "0.15.0"
-gnuplot = "0.0.31"
-scheduler = "0.1"
+serde_json = "1.0"
+gnuplot = "0.0.37"
