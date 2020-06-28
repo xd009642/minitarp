@@ -1,8 +1,9 @@
-use gnuplot::{AutoOption, AxesCommon, Coordinate, Figure, LabelOption, MarginSide};
+use gnuplot::{AutoOption, AxesCommon, Coordinate, Figure, LabelOption, MarginSide, PlotOption};
 use libc::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::f64::consts::PI;
 use std::path::PathBuf;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Deserialize, Serialize)]
@@ -34,6 +35,16 @@ pub enum Event {
     Trace(TraceEvent),
 }
 
+impl Event {
+    fn get_pid(&self) -> Option<pid_t> {
+        if let Event::Trace(t) = &self {
+            t.pid.clone()
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Default, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TraceEvent {
     pid: Option<pid_t>,
@@ -49,10 +60,30 @@ pub struct EventLog {
     events: Vec<Event>,
 }
 
+fn generate_palette(len: usize) -> Vec<String> {
+    let mut res = vec![];
+    let phase_factor = PI * 2.0 / 3.0;
+    for i in 0..len {
+        let i_f = i as f64;
+        let r = ((PI / (len as f64) * 2.0 * i_f).sin() * 127.0).floor() as u8 + 128;
+        let g = ((PI / (len as f64) * 2.0 * i_f + phase_factor).sin() * 127.0).floor() as u8 + 128;
+        let b = ((PI / (len as f64) * 2.0 * i_f + 2.0 * phase_factor).sin() * 127.0).floor() as u8
+            + 128;
+        res.push(format!("#{:x}{:x}{:x}", r, g, b));
+    }
+    res
+}
+
 impl EventLog {
     pub fn save_graph(&self, path: &str) {
         let mut figure = Figure::new();
-        let mut pids = HashSet::new();
+        let pids = self
+            .events
+            .iter()
+            .filter_map(|e| e.get_pid())
+            .collect::<HashSet<pid_t>>();
+        let mut palette = generate_palette(pids.len() + 1);
+        let mut colour_map = HashMap::new();
         let mut y_min = pid_t::max_value();
         let mut y_max = 0;
         {
@@ -81,13 +112,22 @@ impl EventLog {
                     }
                     Event::Trace(trace) => {
                         if let Some(pid) = trace.pid {
-                            pids.insert(pid);
                             axes.label(
                                 &trace.description,
                                 Coordinate::Axis(i as f64),
                                 Coordinate::Axis(pid as f64),
                                 opts,
                             );
+                            let colour = if colour_map.contains_key(&pid) {
+                                let c = colour_map.get(&pid).cloned().unwrap();
+                                c
+                            } else if !palette.is_empty() {
+                                let c = palette.remove(0);
+                                colour_map.insert(pid, c.clone());
+                                c
+                            } else {
+                                "#000000".to_string()
+                            };
                             if pid < y_min {
                                 y_min = pid;
                             }
@@ -97,12 +137,11 @@ impl EventLog {
                             axes.lines_points(
                                 &[i as f64, i as f64 + 1.0],
                                 &[pid as f64, pid as f64],
-                                &[],
+                                &[PlotOption::Color(&colour)],
                             );
                             if let Some(child) = trace.child {
                                 let x = &[i as f64 - 0.5, i as f64 + 0.5];
                                 let y = &[pid as f64, child as f64];
-                                pids.insert(child);
                                 axes.lines_points(x, y, &[]);
                             }
                         }
@@ -113,52 +152,6 @@ impl EventLog {
                 AutoOption::Fix(y_min as f64 - 0.1),
                 AutoOption::Fix(y_max as f64 + 0.5),
             );
-            /*  for pid in self.pids.iter() {
-                let samples = self
-                    .events
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, x)| x.pid == *pid)
-                    .collect::<Vec<_>>();
-                let len = samples.len();
-                let opts = &[LabelOption::Rotate(90.0)];
-                for (i, s) in samples.iter() {
-                    let description = format!("{}: {}", s.pid, s.descr);
-                    axes.label(
-                        &description,
-                        Coordinate::Axis(*i as f64),
-                        Coordinate::Axis(libc::pid_t::from(s.pid) as f64),
-                        opts,
-                    );
-                }
-
-                let xs = samples.iter().map(|(i, _)| *i).collect::<Vec<_>>();
-                let mut ys = Vec::new();
-                ys.resize(len, libc::pid_t::from(*pid));
-
-                axes.lines_points(&xs[..], &ys[..], &[]);
-            }
-
-            // vertical lines!
-            let samples = self
-                .events
-                .iter()
-                .enumerate()
-                .filter(|(_, x)| x.child.is_some())
-                .collect::<Vec<_>>();
-            for (i, s) in samples.iter() {
-                let child = libc::pid_t::from(s.child.unwrap());
-                let x_end = self
-                    .events
-                    .iter()
-                    .enumerate()
-                    .find(|(_, x)| x.pid == Pid::from_raw(child))
-                    .map_or_else(|| *i + 1, |(idx, _)| idx);
-                let x = &[*i, *i + 1, x_end];
-                let y = &[libc::pid_t::from(s.pid), child, child];
-
-                axes.lines_points(x, y, &[]);
-            }*/
         }
         let w = self.events.len() * 20;
         let h = max(pids.len() * 200, 100);
