@@ -92,6 +92,8 @@ impl EventLog {
             axes.set_x_ticks(Some((AutoOption::Fix(1.0), 0)), &[], &[]);
             axes.set_x_grid(true);
             axes.set_margins(&[MarginSide::MarginTop(0.05), MarginSide::MarginBottom(0.80)]);
+            let mut last_pid = 0 as pid_t;
+            let mut pos = 0;
             for (i, event) in self.events.iter().enumerate() {
                 match event {
                     Event::ConfigLaunch(name) => {
@@ -118,29 +120,35 @@ impl EventLog {
                                 Coordinate::Axis(pid as f64),
                                 opts,
                             );
-                            let colour = if colour_map.contains_key(&pid) {
-                                let c = colour_map.get(&pid).cloned().unwrap();
-                                c
-                            } else if !palette.is_empty() {
-                                let c = palette.remove(0);
-                                colour_map.insert(pid, c.clone());
-                                c
-                            } else {
-                                "#000000".to_string()
-                            };
                             if pid < y_min {
                                 y_min = pid;
                             }
                             if pid > y_max {
                                 y_max = pid;
                             }
-                            axes.lines_points(
-                                &[i as f64, i as f64 + 1.0],
-                                &[pid as f64, pid as f64],
-                                &[PlotOption::Color(&colour)],
-                            );
+                            if pid != last_pid {
+                                if last_pid > 0 {
+                                    let colour = if colour_map.contains_key(&last_pid) {
+                                        let c = colour_map.get(&last_pid).cloned().unwrap();
+                                        c
+                                    } else if !palette.is_empty() {
+                                        let c = palette.remove(0);
+                                        colour_map.insert(last_pid, c.clone());
+                                        c
+                                    } else {
+                                        "#000000".to_string()
+                                    };
+                                    axes.lines_points(
+                                        &[pos as f64, i as f64],
+                                        &[last_pid as f64, last_pid as f64],
+                                        &[PlotOption::Color(&colour)],
+                                    );
+                                }
+                                pos = i;
+                            }
+                            last_pid = pid;
                             if let Some(child) = trace.child {
-                                let x = &[i as f64 - 0.5, i as f64 + 0.5];
+                                let x = &[i as f64, i as f64 + 1.0];
                                 let y = &[pid as f64, child as f64];
                                 axes.lines_points(x, y, &[]);
                             }
@@ -156,11 +164,12 @@ impl EventLog {
         let w = self.events.len() * 20;
         let h = max(pids.len() * 200, 100);
         println!("Events {}, height {}", self.events.len(), pids.len());
-        figure.set_terminal(&format!("pngcairo size {},{}", w, h), path);
+        figure.save_to_svg(path, w as _, h as _).expect("Failed to save SVG");
+     /*   figure.set_terminal(&format!("pngcairo size {},{}", w, h), path);
         figure
             .show()
             .expect("Failed to start GNU plot")
             .wait()
-            .expect("GNU plot stalled");
+            .expect("GNU plot stalled");*/
     }
 }

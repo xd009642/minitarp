@@ -19,7 +19,7 @@ fn main() {
     let traces = args.value_of("input").expect("Expected an input");
     let output = args
         .value_of("output")
-        .unwrap_or_else(|| "tarpaulin_plot.png");
+        .unwrap_or_else(|| "tarpaulin_plot.svg");
 
     let fl = File::open(traces).expect("File doesn't exist");
 
