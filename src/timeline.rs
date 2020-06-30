@@ -1,7 +1,7 @@
 use gnuplot::{AutoOption, AxesCommon, Coordinate, Figure, LabelOption, MarginSide, PlotOption};
 use libc::*;
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 use std::path::PathBuf;
@@ -84,16 +84,27 @@ impl EventLog {
             .collect::<HashSet<pid_t>>();
         let mut palette = generate_palette(pids.len() + 1);
         let mut colour_map = HashMap::new();
+        let mut get_colour = |pid| {
+            if colour_map.contains_key(&pid) {
+                let c = colour_map.get(&pid).cloned().unwrap();
+                c
+            } else if !palette.is_empty() {
+                let c = palette.remove(0);
+                colour_map.insert(pid, c.clone());
+                c
+            } else {
+                "#000000".to_string()
+            }
+        };
         let mut y_min = pid_t::max_value();
         let mut y_max = 0;
+        let mut pid_starts = HashMap::new();
         {
             let opts = &[LabelOption::Rotate(90.0)];
             let axes = figure.axes2d();
             axes.set_x_ticks(Some((AutoOption::Fix(1.0), 0)), &[], &[]);
             axes.set_x_grid(true);
             axes.set_margins(&[MarginSide::MarginTop(0.05), MarginSide::MarginBottom(0.80)]);
-            let mut last_pid = 0 as pid_t;
-            let mut pos = 0;
             for (i, event) in self.events.iter().enumerate() {
                 match event {
                     Event::ConfigLaunch(name) => {
@@ -126,50 +137,50 @@ impl EventLog {
                             if pid > y_max {
                                 y_max = pid;
                             }
-                            if pid != last_pid {
-                                if last_pid > 0 {
-                                    let colour = if colour_map.contains_key(&last_pid) {
-                                        let c = colour_map.get(&last_pid).cloned().unwrap();
-                                        c
-                                    } else if !palette.is_empty() {
-                                        let c = palette.remove(0);
-                                        colour_map.insert(last_pid, c.clone());
-                                        c
-                                    } else {
-                                        "#000000".to_string()
-                                    };
+                            if !pid_starts.contains_key(&pid) {
+                                pid_starts.insert(pid, i);
+                            }
+                            if trace.return_val.is_some() {
+                                if let Some(start) = pid_starts.remove(&pid) {
+                                    let colour = get_colour(pid);
                                     axes.lines_points(
-                                        &[pos as f64, i as f64],
-                                        &[last_pid as f64, last_pid as f64],
+                                        &[start as f64, i as f64],
+                                        &[pid as f64, pid as f64],
                                         &[PlotOption::Color(&colour)],
                                     );
                                 }
-                                pos = i;
                             }
-                            last_pid = pid;
                             if let Some(child) = trace.child {
+                                let colour = get_colour(child);
+                                if !pid_starts.contains_key(&child) {
+                                    pid_starts.insert(child, i + 1);
+                                }
                                 let x = &[i as f64, i as f64 + 1.0];
                                 let y = &[pid as f64, child as f64];
-                                axes.lines_points(x, y, &[]);
+                                axes.lines_points(x, y, &[PlotOption::Color(&colour)]);
                             }
                         }
                     }
                 }
+            }
+            for (pid, start) in &pid_starts {
+                let colour = get_colour(*pid);
+                axes.lines_points(
+                    &[*start as f64, self.events.len() as f64],
+                    &[*pid as f64, *pid as f64],
+                    &[PlotOption::Color(&colour)],
+                );
             }
             axes.set_y_range(
                 AutoOption::Fix(y_min as f64 - 0.1),
                 AutoOption::Fix(y_max as f64 + 0.5),
             );
         }
-        let w = self.events.len() * 20;
-        let h = max(pids.len() * 200, 100);
-        println!("Events {}, height {}", self.events.len(), pids.len());
-        figure.save_to_svg(path, w as _, h as _).expect("Failed to save SVG");
-     /*   figure.set_terminal(&format!("pngcairo size {},{}", w, h), path);
+        let w = min((self.events.len() + 1) * 20, 7680);
+        let h = min(max(pids.len() * 200, 100), 4320);
+        println!("Events {}, pids {}", self.events.len(), pids.len());
         figure
-            .show()
-            .expect("Failed to start GNU plot")
-            .wait()
-            .expect("GNU plot stalled");*/
+            .save_to_svg(path, w as _, h as _)
+            .expect("Failed to save SVG");
     }
 }
